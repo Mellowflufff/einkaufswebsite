@@ -43,6 +43,28 @@ const ALIASE = {
   piece: 'Stück', pieces: 'Stück', pack: 'Packung', packet: 'Packung',
 };
 
+// Englische Maße ohne deutsche Entsprechung: werden gleich umgerechnet
+const FREMDMASSE = {
+  cup: ['ml', 240], cups: ['ml', 240],
+  oz: ['g', 28.35], ounce: ['g', 28.35], ounces: ['g', 28.35],
+  lb: ['g', 453.6], lbs: ['g', 453.6], pound: ['g', 453.6], pounds: ['g', 453.6],
+  sheet: ['Stück', 1], sheets: ['Stück', 1], stick: ['Stück', 1], sticks: ['Stück', 1],
+  sprig: ['Stück', 1], sprigs: ['Stück', 1], handful: ['Stück', 1],
+};
+
+// Liefert { einheit, f } für ein Einheitenwort oder null
+function einheitFinden(wort) {
+  const k = wort.toLowerCase();
+  if (ALIASE[k]) return { einheit: ALIASE[k], f: 1 };
+  if (FREMDMASSE[k]) return { einheit: FREMDMASSE[k][0], f: FREMDMASSE[k][1] };
+  return null;
+}
+
+// Umgerechnete Maße (oz, cups) auf ganze Gramm/Milliliter runden
+function umrechnen(menge, f) {
+  return f === 1 ? menge : Math.round(menge * f);
+}
+
 // Einheit, die als Wort vor dem Namen steht: "cloves of garlic", "bunch mint"
 const EINHEIT_VORNE = /^(cloves?|bunch(?:es)?|pinch|cans?|tins?|slices?|zehen?|bund|prise|dosen?|scheiben?)\s+(?:of\s+)?(.+)$/i;
 // Anhängsel ohne Bedeutung für den Einkauf
@@ -52,9 +74,11 @@ function nameSaeubern(name, einheit) {
   name = name.trim().replace(ANHANG, '').trim();
   const m = name.match(EINHEIT_VORNE);
   if (m && (!einheit || einheit === 'Stück')) {
-    return { name: uebersetzen(m[2].replace(ANHANG, '').trim()), einheit: ALIASE[m[1].toLowerCase()] };
+    name = m[2].replace(ANHANG, '').trim();
+    einheit = ALIASE[m[1].toLowerCase()];
   }
-  return { name: uebersetzen(name), einheit };
+  // original = Name vor der Übersetzung; wird nur beim Speichern des Rezepts gebraucht
+  return { name: uebersetzen(name), einheit, original: name };
 }
 
 let state = laden();
@@ -164,8 +188,9 @@ function zeileLesen(roh) {
     const menge = mengeLesen(m[1]);
     const rest = m[2].trim();
     const e = rest.match(/^([A-Za-zäöüÄÖÜ]+)\.?\s+(.+)$/);
-    if (e && ALIASE[e[1].toLowerCase()]) {
-      return { menge, ...nameSaeubern(e[2], ALIASE[e[1].toLowerCase()]) };
+    const gefunden = e && einheitFinden(e[1]);
+    if (gefunden) {
+      return { menge: umrechnen(menge, gefunden.f), ...nameSaeubern(e[2], gefunden.einheit) };
     }
     return { menge, ...nameSaeubern(rest, 'Stück') };
   }
@@ -173,12 +198,14 @@ function zeileLesen(roh) {
   // Form 2: Menge hinten – "beef mince500g", "olive oil2 tbsp", "brown onion1"
   const h = zeile.match(new RegExp('^(.*?\\D)\\s*' + ZAHL + '\\s*([A-Za-zäöüÄÖÜ]*)\\.?$'));
   if (h) {
-    const einheit = h[3] ? ALIASE[h[3].toLowerCase()] : 'Stück';
-    if (einheit) return { menge: mengeLesen(h[2]), ...nameSaeubern(h[1], einheit) };
+    const gefunden = h[3] ? einheitFinden(h[3]) : { einheit: 'Stück', f: 1 };
+    if (gefunden) {
+      return { menge: umrechnen(mengeLesen(h[2]), gefunden.f), ...nameSaeubern(h[1], gefunden.einheit) };
+    }
   }
 
   // Keine Menge – "salt and pepper to taste"
-  return { name: nameSaeubern(zeile, '').name, menge: null, einheit: '' };
+  return { ...nameSaeubern(zeile, ''), menge: null, einheit: '' };
 }
 
 function zutatenLesen(text) {
@@ -193,7 +220,7 @@ function zutatenLesen(text) {
       .replace(/½/g, '1/2').replace(/¼/g, '1/4').replace(/¾/g, '3/4');
     if (!zeile) continue;
     const m = zeile.match(nurMenge);
-    if (m && (!m[2] || ALIASE[m[2].toLowerCase()])) {
+    if (m && (!m[2] || einheitFinden(m[2]))) {
       if (!letzteHatMenge) {
         zeilen[zeilen.length - 1] += zeile;
         letzteHatMenge = true;
@@ -475,21 +502,57 @@ function rezeptFormZuruecksetzen() {
   document.getElementById('rezept-abbrechen').hidden = true;
 }
 
-rezeptForm.addEventListener('submit', ev => {
+// Erkennt ein englisches Rezept: Das Wörterbuch hat etwas übersetzt,
+// oder der Text enthält typisch englische Rezeptwörter.
+function istEnglisch(zutaten, rohtext) {
+  return zutaten.some(z => z.original && z.original.toLowerCase() !== z.name.toLowerCase()) ||
+    /\b(tbsp|tsp|cups?|cloves?|of|and|or|to taste|chopped|sliced|fresh)\b/i.test(rohtext);
+}
+
+let rezeptWirdGespeichert = false;
+
+rezeptForm.addEventListener('submit', async ev => {
   ev.preventDefault();
+  if (rezeptWirdGespeichert) return;
   const f = rezeptForm;
   const zutaten = zutatenLesen(f.zutaten.value);
   if (!zutaten.length) { melde('Bitte mindestens eine Zutat eintragen.'); return; }
+  const bearbeiteId = rezeptBearbeiten;
   const daten = {
     name: f.name.value.trim(),
     portionen: Math.max(1, Number(f.portionen.value) || 1),
     zutaten,
     anleitung: f.anleitung.value.trim(),
   };
+
+  // Englisches Rezept: alles, was das Wörterbuch nicht kannte, online übersetzen
+  if (istEnglisch(zutaten, f.zutaten.value)) {
+    rezeptWirdGespeichert = true;
+    const knopf = f.querySelector('button[type=submit]');
+    knopf.disabled = true;
+    knopf.textContent = 'Übersetze …';
+    try {
+      const deutsch = /[äöüß]/i;
+      for (const z of zutaten) {
+        const unbekannt = z.original && z.original.toLowerCase() === z.name.toLowerCase();
+        if (unbekannt && !deutsch.test(z.name)) z.name = await onlineUebersetzen(z.name, true);
+      }
+      if (!deutsch.test(daten.name)) daten.name = await onlineUebersetzen(daten.name, true);
+      if (daten.anleitung && !deutsch.test(daten.anleitung)) {
+        daten.anleitung = await textOnlineUebersetzen(daten.anleitung);
+      }
+    } finally {
+      rezeptWirdGespeichert = false;
+      knopf.disabled = false;
+      knopf.textContent = 'Speichern';
+    }
+  }
+  for (const z of zutaten) delete z.original;
+
   let text = 'Rezept gespeichert.';
-  if (rezeptBearbeiten) {
-    Object.assign(state.rezepte.find(r => r.id === rezeptBearbeiten) || {}, daten);
-    delete portionenWahl[rezeptBearbeiten];
+  if (bearbeiteId) {
+    Object.assign(state.rezepte.find(r => r.id === bearbeiteId) || {}, daten);
+    delete portionenWahl[bearbeiteId];
   } else {
     // Neues Rezept: Fehlendes kommt automatisch auf die Einkaufsliste
     const neu = { id: neueId(), ...daten };

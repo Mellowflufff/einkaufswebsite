@@ -88,6 +88,59 @@ function einfachUebersetzen(text) {
   return null;
 }
 
+/* ---------- Online-Übersetzung für alles, was nicht im Wörterbuch steht ---------- */
+
+// Kostenloser Dienst MyMemory (ohne Konto, begrenzte Menge pro Tag).
+// Ergebnisse werden im Browser gemerkt, damit jedes Wort nur einmal abgefragt wird.
+const UEBERSETZT_SPEICHER = 'vorrat-uebersetzungen';
+
+async function onlineUebersetzen(text, istZutat) {
+  const key = text.trim().toLowerCase();
+  if (!key) return text;
+  let merk = {};
+  try { merk = JSON.parse(localStorage.getItem(UEBERSETZT_SPEICHER)) || {}; } catch (e) { /* leer */ }
+  if (merk[key]) return merk[key];
+  try {
+    const abbruch = new AbortController();
+    const uhr = setTimeout(() => abbruch.abort(), 8000);
+    const antwort = await fetch('https://api.mymemory.translated.net/get?langpair=en|de&q=' +
+      encodeURIComponent(text.trim()), { signal: abbruch.signal });
+    clearTimeout(uhr);
+    const daten = await antwort.json();
+    let de = daten && daten.responseData && daten.responseData.translatedText;
+    if (daten.responseStatus != 200 || !de || /MYMEMORY WARNING|QUERY LENGTH/i.test(de)) return text;
+    de = de.trim();
+    if (istZutat) de = de.replace(/[?!.,;:]+$/, '').trim(); // "Drachenfrucht?" -> "Drachenfrucht"
+    if (!de) return text;
+    // "CHEDDAR" -> "Cheddar"
+    if (istZutat && de === de.toUpperCase()) de = de.charAt(0) + de.slice(1).toLowerCase();
+    merk[key] = de;
+    localStorage.setItem(UEBERSETZT_SPEICHER, JSON.stringify(merk));
+    return de;
+  } catch (e) {
+    return text; // offline oder Dienst nicht erreichbar: Original behalten
+  }
+}
+
+// Längeren Text (Zubereitung) satzweise in Stücken unter 450 Zeichen übersetzen
+async function textOnlineUebersetzen(text) {
+  const absaetze = [];
+  for (const absatz of text.split('\n')) {
+    if (!absatz.trim()) { absaetze.push(absatz); continue; }
+    const stuecke = [];
+    let stueck = '';
+    for (const satz of absatz.match(/[^.!?]+[.!?]*\s*/g) || [absatz]) {
+      if (stueck && (stueck + satz).length > 450) { stuecke.push(stueck); stueck = ''; }
+      stueck += satz;
+    }
+    if (stueck) stuecke.push(stueck);
+    const fertig = [];
+    for (const s of stuecke) fertig.push(await onlineUebersetzen(s, false));
+    absaetze.push(fertig.join(' '));
+  }
+  return absaetze.join('\n');
+}
+
 // Gibt den deutschen Namen zurück – oder den Originalnamen, wenn nichts passt.
 function uebersetzen(name) {
   const direkt = einfachUebersetzen(name);
