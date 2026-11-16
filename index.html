@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vorrat &amp; Einkauf</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="kopf">
+      <h1>Vorrat &amp; Einkauf</h1>
+      <div id="konto" hidden>
+        <span id="sync-status"></span>
+        <button id="konto-knopf" class="klein">Anmelden</button>
+      </div>
+    </div>
+    <nav>
+      <button class="tab active" data-tab="vorrat">Vorrat</button>
+      <button class="tab" data-tab="rezepte">Rezepte</button>
+      <button class="tab" data-tab="plan">Wochenplan &amp; Einkauf <span id="einkauf-zahl" class="badge"></span></button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- VORRAT -->
+    <section id="vorrat" class="seite active">
+      <form id="vorrat-form" class="karte formular">
+        <h2 id="vorrat-form-titel">Zutat hinzufügen</h2>
+        <div class="reihe">
+          <label class="breit">Name
+            <input name="name" required placeholder="z. B. Milch">
+          </label>
+          <label>Menge
+            <input name="menge" type="number" min="0" step="any" required value="1">
+          </label>
+          <label>Einheit
+            <select name="einheit"></select>
+          </label>
+          <label>Ort
+            <select name="ort">
+              <option>Kühlschrank</option>
+              <option>Speisekammer</option>
+              <option>Gefrierfach</option>
+            </select>
+          </label>
+          <label>Haltbar bis
+            <input name="mhd" type="date">
+          </label>
+        </div>
+        <div class="knoepfe">
+          <button type="submit" class="primaer">Speichern</button>
+          <button type="button" id="vorrat-abbrechen" hidden>Abbrechen</button>
+        </div>
+      </form>
+      <input id="vorrat-suche" class="suche" type="search" placeholder="Vorrat durchsuchen …">
+      <div id="vorrat-liste"></div>
+    </section>
+
+    <!-- REZEPTE -->
+    <section id="rezepte" class="seite">
+      <form id="rezept-form" class="karte formular">
+        <h2 id="rezept-form-titel">Rezept hinzufügen</h2>
+        <div class="reihe">
+          <label class="breit">Name
+            <input name="name" required placeholder="z. B. Pfannkuchen">
+          </label>
+          <label>Portionen
+            <input name="portionen" type="number" min="1" step="1" required value="2">
+          </label>
+        </div>
+        <label>Zutaten (eine pro Zeile, z. B. „200 g Mehl“ oder kopiert wie „beef mince500g“)
+          <textarea name="zutaten" rows="6" required placeholder="200 g Mehl&#10;2 Eier&#10;300 ml Milch&#10;1 Prise Salz"></textarea>
+        </label>
+        <label>Zubereitung (optional)
+          <textarea name="anleitung" rows="3"></textarea>
+        </label>
+        <div class="knoepfe">
+          <button type="submit" class="primaer">Speichern</button>
+          <button type="button" id="rezept-abbrechen" hidden>Abbrechen</button>
+        </div>
+      </form>
+      <div id="rezept-liste"></div>
+    </section>
+
+    <!-- WOCHENPLAN -->
+    <section id="plan" class="seite">
+      <div class="woche-kopf">
+        <button id="woche-zurueck" title="Vorherige Woche">‹</button>
+        <h2 id="woche-titel"></h2>
+        <button id="woche-vor" title="Nächste Woche">›</button>
+        <button id="woche-heute">Heute</button>
+      </div>
+      <div class="knoepfe leiste">
+        <button id="woche-einkauf" class="primaer">Fehlendes für diese Woche auf die Einkaufsliste</button>
+      </div>
+      <div id="plan-liste" class="kalender"></div>
+      <p id="plan-leer" class="leer" hidden>Lege zuerst unter „Rezepte“ ein Rezept an, dann kannst du es hier einplanen.</p>
+    </section>
+
+    <!-- EINKAUFSLISTE -->
+    <!-- wird zusammen mit dem Wochenplan angezeigt (siehe style.css) -->
+    <section id="einkauf" class="seite">
+      <h2 class="abschnitt">Einkaufsliste</h2>
+      <form id="einkauf-form" class="karte formular">
+        <h2>Artikel hinzufügen</h2>
+        <div class="reihe">
+          <label class="breit">Name
+            <input name="name" required placeholder="z. B. Butter">
+          </label>
+          <label>Menge
+            <input name="menge" type="number" min="0" step="any" value="1">
+          </label>
+          <label>Einheit
+            <select name="einheit"></select>
+          </label>
+        </div>
+        <div class="knoepfe">
+          <button type="submit" class="primaer">Hinzufügen</button>
+        </div>
+      </form>
+      <div class="knoepfe leiste">
+        <button id="einkauf-uebernehmen" class="primaer">Abgehakte in den Vorrat übernehmen</button>
+        <button id="einkauf-kopieren">Liste kopieren</button>
+        <button id="einkauf-leeren" class="gefahr">Liste leeren</button>
+      </div>
+      <div id="einkauf-liste"></div>
+      <p class="hinweis">Der „REWE“-Knopf öffnet die Suche nach dem Artikel im REWE-Onlineshop. Dort legst du ihn selbst in den Warenkorb und wählst Abholung oder Lieferung.</p>
+    </section>
+  </main>
+
+  <footer>
+    <button id="export">Daten sichern (Export)</button>
+    <button id="import-knopf">Sicherung laden (Import)</button>
+    <input id="import-datei" type="file" accept="application/json" hidden>
+  </footer>
+
+  <dialog id="frage">
+    <form method="dialog">
+      <p id="frage-text"></p>
+      <div class="knoepfe">
+        <button value="ja" class="primaer">Ja</button>
+        <button value="nein">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="anmelden">
+    <form id="anmelden-form" class="formular">
+      <h2>Anmelden</h2>
+      <p class="hinweis">Mit einem Konto hast du deine Daten auf allen Geräten.</p>
+      <label>E-Mail
+        <input name="email" type="email" required autocomplete="email">
+      </label>
+      <label>Passwort (mindestens 6 Zeichen)
+        <input name="passwort" type="password" required minlength="6" autocomplete="current-password">
+      </label>
+      <p id="anmelden-hinweis" class="hinweis" role="status"></p>
+      <div class="knoepfe">
+        <button type="submit" class="primaer">Anmelden</button>
+        <button type="button" id="anmelden-neu">Neues Konto anlegen</button>
+        <button type="button" id="anmelden-zu">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="meldung" role="status"></div>
+  <script src="woerterbuch.js"></script>
+  <script src="packungen.js"></script>
+  <script src="app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="sync.js"></script>
+</body>
+</html>
