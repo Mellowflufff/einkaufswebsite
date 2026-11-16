@@ -509,6 +509,46 @@ function istEnglisch(zutaten, rohtext) {
     /\b(tbsp|tsp|cups?|cloves?|of|and|or|to taste|chopped|sliced|fresh)\b/i.test(rohtext);
 }
 
+const NUR_LINK = /^\s*https?:\/\/\S+\s*$/i; // Zubereitung ist nur eine Internetadresse
+const ENGLISCHE_WOERTER = /\b(of|and|with|fresh|sliced|chopped|rice|chicken|beef|sauce|seeds?|water|tin|jar|hot|white|bowl|bake|cloves?|the|until|add|heat)\b/i;
+
+// Bereits gespeicherte Rezepte nachträglich übersetzen
+async function gespeicherteUebersetzen() {
+  const deutsch = /[äöüß]/i;
+  let geaendert = 0;
+  for (const r of state.rezepte) {
+    const texte = [r.name, ...r.zutaten.map(z => z.name)];
+    const englisch = texte.some(t => ENGLISCHE_WOERTER.test(t) || uebersetzen(t).toLowerCase() !== t.toLowerCase());
+    if (!englisch) continue;
+    const vorher = JSON.stringify(r);
+    for (const z of r.zutaten) {
+      let n = uebersetzen(z.name);
+      if (n.toLowerCase() === z.name.toLowerCase() && !deutsch.test(n)) n = await onlineUebersetzen(n, true);
+      z.name = n;
+    }
+    if (!deutsch.test(r.name)) r.name = await onlineUebersetzen(r.name, true);
+    if (r.anleitung && !deutsch.test(r.anleitung) && !NUR_LINK.test(r.anleitung) && ENGLISCHE_WOERTER.test(r.anleitung)) {
+      r.anleitung = await textOnlineUebersetzen(r.anleitung);
+    }
+    if (JSON.stringify(r) !== vorher) geaendert++;
+  }
+  return geaendert;
+}
+
+document.getElementById('rezepte-uebersetzen').addEventListener('click', async ev => {
+  const knopf = ev.currentTarget;
+  knopf.disabled = true;
+  knopf.textContent = 'Übersetze …';
+  try {
+    const n = await gespeicherteUebersetzen();
+    if (n) speichern();
+    melde(n ? `${n} Rezept${n === 1 ? '' : 'e'} übersetzt.` : 'Es gab nichts zu übersetzen.');
+  } finally {
+    knopf.disabled = false;
+    knopf.textContent = 'Englische Rezepte übersetzen';
+  }
+});
+
 let rezeptWirdGespeichert = false;
 
 rezeptForm.addEventListener('submit', async ev => {
@@ -538,7 +578,7 @@ rezeptForm.addEventListener('submit', async ev => {
         if (unbekannt && !deutsch.test(z.name)) z.name = await onlineUebersetzen(z.name, true);
       }
       if (!deutsch.test(daten.name)) daten.name = await onlineUebersetzen(daten.name, true);
-      if (daten.anleitung && !deutsch.test(daten.anleitung)) {
+      if (daten.anleitung && !deutsch.test(daten.anleitung) && !NUR_LINK.test(daten.anleitung)) {
         daten.anleitung = await textOnlineUebersetzen(daten.anleitung);
       }
     } finally {

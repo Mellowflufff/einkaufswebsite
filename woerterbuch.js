@@ -10,6 +10,11 @@ const WOERTERBUCH = {
   'chicken': 'Hähnchen', 'chicken breast': 'Hähnchenbrust', 'chicken thigh': 'Hähnchenschenkel',
   'turkey': 'Pute', 'bacon': 'Bacon', 'ham': 'Schinken', 'sausage': 'Wurst',
   'salmon': 'Lachs', 'tuna': 'Thunfisch', 'prawn': 'Garnelen', 'shrimp': 'Garnelen', 'fish': 'Fisch',
+  'tuna in spring water': 'Thunfisch im eigenen Saft', 'tin tuna in spring water': 'Thunfisch im eigenen Saft',
+  'garlic clove': 'Knoblauchzehe', 'baby spinach': 'Babyspinat', 'sun dried tomato': 'getrocknete Tomaten',
+  'sun-dried tomato': 'getrocknete Tomaten', 'steamed rice': 'gekochter Reis', 'cooked rice': 'gekochter Reis',
+  'white sesame seed': 'Sesam', 'risoni': 'Risoni', 'orzo': 'Risoni', 'kimchi': 'Kimchi', 'nori': 'Nori',
+  'sriracha': 'Sriracha', 'sriracha hot sauce': 'Sriracha', 'hot sauce': 'scharfe Sauce',
   // Gemüse
   'onion': 'Zwiebel', 'brown onion': 'Zwiebel', 'yellow onion': 'Zwiebel', 'white onion': 'Zwiebel',
   'red onion': 'rote Zwiebel', 'spring onion': 'Frühlingszwiebel', 'shallot': 'Schalotte', 'leek': 'Lauch',
