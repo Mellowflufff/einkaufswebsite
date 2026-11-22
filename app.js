@@ -78,7 +78,11 @@ function nameSaeubern(name, einheit) {
     einheit = ALIASE[m[1].toLowerCase()];
   }
   // original = Name vor der Übersetzung; wird nur beim Speichern des Rezepts gebraucht
-  return { name: uebersetzen(name), einheit, original: name };
+  let deutsch = uebersetzen(name);
+  // "4 Knoblauchzehen" -> 4 Zehe Knoblauch, damit der Abgleich mit "Knoblauch" im Vorrat klappt
+  const zehe = deutsch.match(/^(.{3,}?)zehen?$/i);
+  if (zehe && einheit === 'Stück') { deutsch = zehe[1]; einheit = 'Zehe'; }
+  return { name: deutsch, einheit, original: name };
 }
 
 let state = laden();
@@ -260,13 +264,18 @@ function pruefe(z, faktor) {
     return { status: 'fehlt', menge: z.menge == null ? null : z.menge * faktor, einheit: z.einheit };
   }
   if (z.menge == null) return { status: 'ok' };
-  const e = einheitInfo(z.einheit);
-  const gleiche = treffer.filter(v => einheitInfo(v.einheit).basis === e.basis);
-  if (!gleiche.length) return { status: 'unklar' };
-  const habe = gleiche.reduce((s, v) => s + v.menge * einheitInfo(v.einheit).f, 0);
-  const brauche = z.menge * faktor * e.f;
+  // Vorrat in die Einheit des Rezepts umrechnen (z. B. 1 Knolle Knoblauch -> 10 Zehen)
+  let habe = 0;
+  let umrechenbar = 0;
+  for (const v of treffer) {
+    const x = inEinheit(z.name, v.menge, v.einheit, z.einheit);
+    if (x != null) { habe += x; umrechenbar++; }
+  }
+  if (!umrechenbar) return { status: 'unklar' };
+  const brauche = z.menge * faktor;
   if (habe >= brauche - 1e-9) return { status: 'ok' };
-  return { status: 'teil', ...schoen(brauche - habe, e.basis) };
+  const e = einheitInfo(z.einheit);
+  return { status: 'teil', ...schoen((brauche - habe) * e.f, e.basis) };
 }
 
 function faktorVon(r) {
@@ -276,17 +285,19 @@ function faktorVon(r) {
 // auto = false: von Hand eingetragen, Menge wird nicht auf Packungen aufgerundet
 function aufEinkaufsliste(name, menge, einheit, auto = true) {
   const k = schluessel(name);
-  const info = einheitInfo(einheit);
-  const da = state.einkauf.find(a => !a.erledigt && schluessel(a.name) === k &&
-    einheitInfo(a.einheit).basis === info.basis);
-  if (da) {
-    if (menge != null) {
-      const summe = (da.menge || 0) * einheitInfo(da.einheit).f + menge * info.f;
-      Object.assign(da, schoen(summe, info.basis));
+  const offen = state.einkauf.filter(a => !a.erledigt && schluessel(a.name) === k);
+  for (const da of offen) {
+    if (menge == null) return; // steht schon drauf
+    if (da.menge == null) { Object.assign(da, { menge, einheit: einheit || 'Stück' }); return; }
+    // Zur vorhandenen Zeile addieren, auch bei anderer Einheit (3 Zehen + 1 Knolle)
+    const x = inEinheit(name, menge, einheit, da.einheit);
+    if (x != null) {
+      const i = einheitInfo(da.einheit);
+      Object.assign(da, schoen((da.menge + x) * i.f, i.basis));
+      return;
     }
-  } else {
-    state.einkauf.push({ id: neueId(), name, menge, einheit: einheit || 'Stück', erledigt: false, auto });
   }
+  state.einkauf.push({ id: neueId(), name, menge, einheit: einheit || 'Stück', erledigt: false, auto });
 }
 
 // Setzt alles, was für das Rezept fehlt, auf die Einkaufsliste. Gibt die Anzahl zurück.
@@ -304,10 +315,11 @@ function fehlendesEinkaufen(r) {
 
 function inVorrat(name, menge, einheit) {
   const k = schluessel(name);
-  const info = einheitInfo(einheit);
-  const da = state.vorrat.find(v => schluessel(v.name) === k && einheitInfo(v.einheit).basis === info.basis);
+  let x = null;
+  const da = state.vorrat.find(v => schluessel(v.name) === k &&
+    (x = inEinheit(name, menge, einheit, v.einheit)) != null);
   if (da) {
-    da.menge += (menge * info.f) / einheitInfo(da.einheit).f;
+    da.menge = Math.round((da.menge + x) * 1000) / 1000;
   } else {
     state.vorrat.push({ id: neueId(), name, menge, einheit, ort: 'Speisekammer', mhd: '' });
   }
@@ -318,16 +330,15 @@ function kochen(r) {
   for (const z of r.zutaten) {
     if (z.menge == null) continue;
     const k = schluessel(z.name);
-    const e = einheitInfo(z.einheit);
-    let offen = z.menge * faktor * e.f;
+    let offen = z.menge * faktor; // in der Einheit des Rezepts
     const passend = state.vorrat
-      .filter(v => schluessel(v.name) === k && einheitInfo(v.einheit).basis === e.basis)
+      .filter(v => schluessel(v.name) === k && inEinheit(z.name, 1, v.einheit, z.einheit) != null)
       .sort((a, b) => (a.mhd || '9999').localeCompare(b.mhd || '9999'));
     for (const v of passend) {
-      if (offen <= 0) break;
-      const f = einheitInfo(v.einheit).f;
-      const nimm = Math.min(v.menge * f, offen);
-      v.menge = Math.round((v.menge - nimm / f) * 1000) / 1000;
+      if (offen <= 1e-9) break;
+      const vorhanden = inEinheit(z.name, v.menge, v.einheit, z.einheit);
+      const nimm = Math.min(vorhanden, offen);
+      v.menge = Math.round((v.menge - inEinheit(z.name, nimm, z.einheit, v.einheit)) * 1000) / 1000;
       offen -= nimm;
     }
   }
@@ -901,22 +912,33 @@ document.getElementById('woche-heute').addEventListener('click', () => { wochenV
 // Bedarf aller Rezepte der Woche zusammenzählen und erst dann mit dem Vorrat vergleichen,
 // damit eine Zutat, die zwei Rezepte brauchen, nicht doppelt als "vorhanden" zählt.
 function wochenBedarf() {
-  const bedarf = new Map();
+  const liste = [];
   for (const t of wochenTage()) {
     for (const e of state.plan[t.iso] || []) {
       const r = state.rezepte.find(x => x.id === e.rezeptId);
       if (!r) continue;
       for (const z of r.zutaten) {
-        const info = einheitInfo(z.einheit);
-        const ohneMenge = z.menge == null;
-        const key = schluessel(z.name) + '|' + (ohneMenge ? '' : info.basis);
-        const alt = bedarf.get(key) || { name: z.name, menge: ohneMenge ? null : 0, einheit: ohneMenge ? '' : info.basis };
-        if (!ohneMenge) alt.menge += z.menge * (e.portionen / r.portionen) * info.f;
-        bedarf.set(key, alt);
+        const k = schluessel(z.name);
+        if (z.menge == null) {
+          if (!liste.some(b => b.key === k)) liste.push({ key: k, name: z.name, menge: null, einheit: '' });
+          continue;
+        }
+        const m = z.menge * (e.portionen / r.portionen);
+        // In die Einheit der ersten Nennung umrechnen und dazuzählen
+        let ziel = null;
+        let x = null;
+        for (const b of liste) {
+          if (b.key !== k) continue;
+          if (b.menge == null) { ziel = b; b.menge = 0; b.einheit = z.einheit; x = m; break; }
+          x = inEinheit(z.name, m, z.einheit, b.einheit);
+          if (x != null) { ziel = b; break; }
+        }
+        if (ziel) ziel.menge += x;
+        else liste.push({ key: k, name: z.name, menge: m, einheit: z.einheit });
       }
     }
   }
-  return [...bedarf.values()];
+  return liste;
 }
 
 document.getElementById('woche-einkauf').addEventListener('click', () => {

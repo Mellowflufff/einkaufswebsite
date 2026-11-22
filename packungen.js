@@ -88,13 +88,21 @@ function kaufmenge(artikel) {
   const info = einheitInfo(artikel.einheit);
   const bedarf = artikel.menge == null ? null : artikel.menge * info.f;
   const regel = packRegel(artikel.name);
-  if (!regel) return ohneRegel(bedarf, info.basis);
-  if (bedarf != null && regel.einheit === info.basis) {
-    return schoen(aufPackungen(bedarf, regel.groessen), regel.einheit);
+  if (!regel) {
+    // Lose Ware mit bekanntem Stückgewicht (Zwiebeln, Paprika …): in ganzen Stück kaufen
+    if (bedarf != null && (info.basis === 'g' || info.basis === 'ml') && typeof zutatGewichte === 'function' &&
+        zutatGewichte(artikel.name)['Stück']) {
+      const stueck = inEinheit(artikel.name, artikel.menge, artikel.einheit, 'Stück');
+      if (stueck != null) return { menge: Math.max(1, Math.ceil(stueck - 1e-9)), einheit: 'Stück' };
+    }
+    return ohneRegel(bedarf, info.basis);
   }
   // Gewürz-Packung, aber Bedarf z. B. in Bund: das ist die frische Ware
   const gemessen = ['g', 'ml', 'Prise'].includes(info.basis);
   if (bedarf != null && regel.einheit === 'Packung' && !gemessen) return ohneRegel(bedarf, info.basis);
-  // Andere Einheit als die Packung (EL Öl, Zehe Knoblauch, ml Brühe): eine kleinste Packung
+  // Bedarf in die Packungseinheit umrechnen (15 Zehen Knoblauch -> 1,5 Knollen -> 2 Stück)
+  const inPackEinheit = inEinheit(artikel.name, artikel.menge, artikel.einheit, regel.einheit);
+  if (inPackEinheit != null) return schoen(aufPackungen(inPackEinheit, regel.groessen), regel.einheit);
+  // Nicht umrechenbar: eine kleinste Packung
   return schoen(regel.groessen[0], regel.einheit);
 }
