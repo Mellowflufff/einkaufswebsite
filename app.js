@@ -70,18 +70,96 @@ const EINHEIT_VORNE = /^(cloves?|bunch(?:es)?|pinch|cans?|tins?|slices?|zehen?|b
 // Anhängsel ohne Bedeutung für den Einkauf
 const ANHANG = /\s+(to taste|to finish|to serve|to garnish|nach geschmack|zum servieren|zum garnieren)$/i;
 
+/* ---------- Zubereitungshinweise entfernen ---------- */
+// Wörter, die nur beschreiben, wie eine Zutat vorbereitet wird. Für den Einkauf egal.
+// Deutsche Wörter auch mit Endungen: gehackt -> gehackte, gehackter, gehacktes …
+const ZUB_WOERTER = [
+  'gehackt', 'feingehackt', 'gewürfelt', 'gepresst', 'gepellt', 'geschält', 'gerieben', 'geraspelt', 'gehobelt',
+  'zerdrückt', 'zerkleinert', 'zerlassen', 'geschmolzen', 'halbiert', 'geviertelt', 'gedrittelt', 'geschnitten',
+  'kleingeschnitten', 'gemahlen', 'gestoßen', 'geröstet', 'gebraten', 'gedünstet', 'gegart', 'gekocht',
+  'aufgetaut', 'entsteint', 'entkernt', 'abgetropft', 'gewaschen', 'geputzt', 'gestiftelt', 'gezupft',
+  'verquirlt', 'zimmerwarm', 'weich', 'kalt', 'lauwarm', 'warm', 'fein', 'grob', 'frisch', 'klein', 'groß',
+  'mittelgroß', 'dünn', 'dick', 'ca', 'etwa', 'ungefähr', 'optional',
+  'chopped', 'diced', 'minced', 'sliced', 'crushed', 'peeled', 'grated', 'finely', 'roughly', 'thinly',
+  'coarsely', 'freshly', 'fresh', 'halved', 'quartered', 'shredded', 'melted', 'softened', 'drained',
+  'rinsed', 'beaten', 'trimmed', 'deseeded', 'cubed', 'toasted', 'small', 'medium', 'large', 'about', 'approx',
+];
+const ZUB_WORT = new RegExp('^(' + ZUB_WOERTER.join('|') + ')(e|er|es|en|em|s)?\\.?$', 'i');
+const BINDEWORT = /^(and|or|und|oder|&)$/i;
+// Bezeichnungen, die ein eigenes Produkt sind und nicht gekürzt werden dürfen
+let produktNamen = null;
+
+function istProdukt(name) {
+  if (!produktNamen) {
+    produktNamen = new Set([
+      ...Object.keys(WOERTERBUCH), ...Object.values(WOERTERBUCH),
+      ...Object.keys(typeof PACKUNGEN_ROH === 'object' ? PACKUNGEN_ROH : {}),
+      ...Object.keys(typeof GEWICHTE_ROH === 'object' ? GEWICHTE_ROH : {}),
+    ].map(n => n.toLowerCase()));
+  }
+  const s = name.toLowerCase().trim();
+  return produktNamen.has(s) || nachschlagen(s) != null;
+}
+
+// "fein gehackte Zwiebel" -> "Zwiebel", "Butter, weich" -> "Butter",
+// "onion, peeled and cut into wedges" -> "onion", "Mehl zum Bestäuben" -> "Mehl"
+function zubereitungEntfernen(name) {
+  // Klammern immer weg: (gepresst), (optional), auch "Kreuzkümmel (gemahlen)"
+  const original = String(name).replace(/\s*\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!original || istProdukt(original)) return original;
+  let s = original
+    .replace(/\s+(zum|zur|für|nach|to|for)\s+.*$/i, '')              // zum Braten, nach Belieben, to serve
+    .replace(/\s*\b(cut\s+)?into\s+.*$/i, '')                         // cut into wedges
+    .replace(/\s+in\s+(\S+\s+)?(Scheiben|Würfel\S*|Streifen|Ringe\S*|Stück\S*|Spalten|Röschen|Stifte\S*)(\s.*)?$/i, '');
+  // Nach einem Komma: behalten, wenn dort eine weitere Zutat steht ("Salz, Pfeffer")
+  const komma = s.indexOf(',');
+  if (komma > 0) {
+    const rest = s.slice(komma + 1).trim();
+    const weitereZutat = /^[A-ZÄÖÜ]/.test(rest) || uebersetzen(rest) !== rest;
+    if (!weitereZutat) s = s.slice(0, komma);
+  }
+  const woerter = s.split(/\s+/).filter(w => w && !ZUB_WORT.test(w.replace(/[,;]+$/, '')));
+  while (woerter.length && BINDEWORT.test(woerter[0])) woerter.shift();
+  while (woerter.length && BINDEWORT.test(woerter[woerter.length - 1])) woerter.pop();
+  const ergebnis = woerter.join(' ').replace(/[\s,;]+$/, '').trim();
+  return ergebnis || original;
+}
+
+// "Knoblauchzehe(n)" -> Name "Knoblauch", Einheit "Zehe"
+function zeheAufteilen(name, einheit) {
+  const m = String(name).trim().match(/^(.{3,}?)zehen?$/i);
+  if (!m || (einheit && einheit !== 'Stück')) return null;
+  return { name: m[1], einheit: einheit ? 'Zehe' : einheit };
+}
+
+// Ältere Einträge an die neue Schreibweise anpassen: Zubereitungshinweise aus
+// Rezeptzutaten entfernen, "4 Stück Knoblauchzehe" -> "4 Zehe Knoblauch".
+// Läuft bei jedem Zeichnen, damit auch Daten aus dem Online-Konto erfasst werden.
+function zehenBereinigen() {
+  for (const r of state.rezepte) {
+    for (const z of r.zutaten) z.name = zubereitungEntfernen(z.name);
+  }
+  const listen = [state.vorrat, state.einkauf, ...state.rezepte.map(r => r.zutaten)];
+  for (const liste of listen) {
+    for (const x of liste) {
+      const neu = zeheAufteilen(x.name, x.einheit);
+      if (neu) { x.name = neu.name; x.einheit = neu.einheit; }
+    }
+  }
+}
+
 function nameSaeubern(name, einheit) {
-  name = name.trim().replace(ANHANG, '').trim();
+  name = zubereitungEntfernen(name.trim().replace(ANHANG, '').trim());
   const m = name.match(EINHEIT_VORNE);
   if (m && (!einheit || einheit === 'Stück')) {
     name = m[2].replace(ANHANG, '').trim();
     einheit = ALIASE[m[1].toLowerCase()];
   }
   // original = Name vor der Übersetzung; wird nur beim Speichern des Rezepts gebraucht
-  let deutsch = uebersetzen(name);
+  let deutsch = zubereitungEntfernen(uebersetzen(name));
   // "4 Knoblauchzehen" -> 4 Zehe Knoblauch, damit der Abgleich mit "Knoblauch" im Vorrat klappt
-  const zehe = deutsch.match(/^(.{3,}?)zehen?$/i);
-  if (zehe && einheit === 'Stück') { deutsch = zehe[1]; einheit = 'Zehe'; }
+  const zehe = zeheAufteilen(deutsch, einheit);
+  if (zehe) { deutsch = zehe.name; einheit = zehe.einheit; }
   return { name: deutsch, einheit, original: name };
 }
 
@@ -240,9 +318,10 @@ function zutatenLesen(text) {
   }
 
   return zeilen.map(zeileLesen).filter(Boolean).flatMap(z => {
-    // "Salz und Pfeffer" ohne Menge sind zwei Zutaten
-    if (z.menge == null && / und /.test(z.name)) {
-      return z.name.split(/ und /).map(n => ({ name: n.trim(), menge: null, einheit: '' }));
+    // "Salz und Pfeffer" / "Salz, Pfeffer" ohne Menge sind zwei Zutaten
+    if (z.menge == null && /( und |, )/.test(z.name)) {
+      return z.name.split(/ und |, /).map(n => n.trim()).filter(Boolean)
+        .map(n => ({ name: n, menge: null, einheit: '', original: z.original }));
     }
     return [z];
   });
@@ -457,6 +536,7 @@ function einkaufZeichnen() {
 }
 
 function allesZeichnen() {
+  zehenBereinigen();
   vorratZeichnen();
   rezepteZeichnen();
   planZeichnen();
